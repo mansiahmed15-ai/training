@@ -1020,14 +1020,54 @@ async function submitScanRequest(tid) {
 
 async function acceptScanRequest(tid) {
   const f = fb(); if (!f) return;
+
+  // Get the day from the scan request
+  const snap = await f.get(f.ref(f.db, 'scan_requests/' + tid));
+  const req  = snap.exists() ? snap.val() : null;
+  const dayId = req?.dayId || 1;
+
+  // Mark attendance: present
+  await f.set(f.ref(f.db, `training/attendance/${tid}/${dayId}`), 'present');
+
+  // Update local cache
+  if (!_attendance[tid]) _attendance[tid] = {};
+  _attendance[tid][dayId] = 'present';
+  try { localStorage.setItem('fq5_attendance_v1', JSON.stringify(_attendance)); } catch {}
+
+  // Approve the scan request
   await f.set(f.ref(f.db, 'scan_requests/' + tid + '/status'), 'approved');
-  toast('✅ تم قبول ' + (_trainees.find(x => x.id === tid)?.name || tid));
+
+  const name = _trainees.find(x => x.id === tid)?.name || tid;
+  toast('✅ تم قبول ' + name + ' — سُجّل حضوره اليوم ' + dayId);
+
+  // Refresh attendance table if open
+  renderAttendance();
 }
 
 async function rejectScanRequest(tid) {
   const f = fb(); if (!f) return;
+
+  // Get the day from the scan request
+  const snap = await f.get(f.ref(f.db, 'scan_requests/' + tid));
+  const req  = snap.exists() ? snap.val() : null;
+  const dayId = req?.dayId || 1;
+
+  // Mark attendance: absent
+  await f.set(f.ref(f.db, `training/attendance/${tid}/${dayId}`), 'absent');
+
+  // Update local cache
+  if (!_attendance[tid]) _attendance[tid] = {};
+  _attendance[tid][dayId] = 'absent';
+  try { localStorage.setItem('fq5_attendance_v1', JSON.stringify(_attendance)); } catch {}
+
+  // Reject the scan request
   await f.set(f.ref(f.db, 'scan_requests/' + tid + '/status'), 'rejected');
-  toast('❌ تم رفض ' + (_trainees.find(x => x.id === tid)?.name || tid));
+
+  const name = _trainees.find(x => x.id === tid)?.name || tid;
+  toast('❌ تم رفض ' + name + ' — سُجّل غيابه اليوم ' + dayId);
+
+  // Refresh attendance table if open
+  renderAttendance();
 }
 
 async function clearScanRequests() {

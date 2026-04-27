@@ -262,73 +262,24 @@ body.qr-loading #trainee-welcome { display:none !important; }
       projectId: "qr-training-2026",
       storageBucket: "qr-training-2026.firebasestorage.app",
       messagingSenderId: "82257215990",
-      appId: "1:82257215990:web:e675151b45bafe96f387d7",
-      measurementId: "G-J6727JD2KD"
+      appId: "1:82257215990:web:e675151b45bafe96f387d7"
     };
 
-    try {
-      const app = initializeApp(firebaseConfig);
-      const db  = getDatabase(app);
+    const app = initializeApp(firebaseConfig);
+    const db  = getDatabase(app);
 
-      window._fbDb      = db;
-      window._fbRef     = ref;
-      window._fbSet     = set;
-      window._fbGet     = get;
-      window._fbRemove  = remove;
-      window._fbOnValue = onValue;
-      window._fbPush    = push;
+    // Expose to global scope immediately — no async waiting
+    window.FB = { db, ref, set, get, remove, onValue, push };
+    window._fbReady = true;
 
-      // Use onValue on .info/connected — this special path is always readable
-      // regardless of security rules. It tells us if the client is online.
-      onValue(ref(db, '.info/connected'), (snap) => {
-        if (snap.val() === true) {
-          if (!window._fbReady) {
-            window._fbReady = true;
-            window._fbError = null;
-            // Hide error banner if it was showing
-            const banner = document.getElementById('firebase-error-banner');
-            if (banner) banner.style.display = 'none';
-            console.log("✅ Firebase Realtime Database connected:", firebaseConfig.projectId);
-          }
-        } else {
-          // snap.val() === false means offline but SDK loaded fine
-          // Still mark as ready — operations will queue and sync when online
-          if (!window._fbReady) {
-            window._fbReady = true;
-            console.log("⚡ Firebase SDK loaded (currently offline — will sync when online)");
-          }
-        }
-      }, (err) => {
-        console.error("❌ Firebase error:", err.message);
-        window._fbReady = false;
-        window._fbError = err.message;
-        const banner = document.getElementById('firebase-error-banner');
-        if (banner) banner.style.display = 'block';
-      });
-
-      // Set ready immediately after init — the onValue above confirms connection
-      // but we set ready=true here so the app doesn't wait for the first callback
-      window._fbReady = true;
-      console.log("✅ Firebase SDK initialized for project:", firebaseConfig.projectId);
-
-    } catch(err) {
-      console.error("❌ Firebase init error:", err.message);
-      window._fbReady = false;
-      window._fbError = err.message;
-      const banner = document.getElementById('firebase-error-banner');
-      if (banner) banner.style.display = 'block';
-    }
+    console.log("✅ Firebase initialized:", firebaseConfig.projectId);
   </script>
   <!-- ═══════ END FIREBASE SDK ═══════ -->
 </head>
 <body>
 
-<!-- Firebase Error Banner — hidden by default, shown if API key is wrong -->
-<div id="firebase-error-banner" style="display:none;background:#fef2f2;border-bottom:2px solid #fca5a5;padding:10px 22px;text-align:center;font-family:Tajawal,sans-serif;position:sticky;top:0;z-index:999">
-  <strong style="color:#dc2626">❌ Firebase غير متصل</strong>
-  <span style="color:#7f1d1d;font-size:.88rem;margin-right:8px">— تحقق من apiKey في الكود. افتح Console (F12) لتفاصيل الخطأ.</span>
-  <a href="https://console.firebase.google.com/project/qr-training-2026/settings/general" target="_blank" style="color:#dc2626;font-weight:700;font-size:.82rem">فتح Firebase Console ←</a>
-</div>
+<!-- Firebase status banner (hidden) -->
+<div id="firebase-error-banner" style="display:none"></div>
 
 <nav style="background:#ffffff;border-bottom:2px solid #b8d8cc;height:64px;display:flex;align-items:center;justify-content:space-between;padding:0 22px;position:sticky;top:0;z-index:300;box-shadow:0 2px 16px rgba(10,92,62,.10)">
   <div style="display:flex;align-items:center;gap:13px;flex-shrink:0">
@@ -903,221 +854,197 @@ const K_RESULTS    = 'fq5_results_v1';
 const K_ATTENDANCE = 'fq5_attendance_v1';
 
 // ═══════════════════════════════════════════════════════
-//  FIREBASE REALTIME DATABASE — STORAGE LAYER
+//  STORAGE — Firebase Realtime Database (primary) + localStorage (fallback)
 // ═══════════════════════════════════════════════════════
 
 window.__TRAINING_DATA__ = {"trainees":[{"id":"mofeqquclqv","name":"Yahia","sid":"111","dept":"—","spec":"—","createdAt":"2026-04-26T06:49:01.284Z"},{"id":"mofeqz0t54s","name":"Ahmed","sid":"222","dept":"—","spec":"—","createdAt":"2026-04-26T06:49:11.885Z"},{"id":"mofer73k4bt","name":"Mahmoud","sid":"333","dept":"—","spec":"—","createdAt":"2026-04-26T06:49:22.352Z"},{"id":"moferda3rou","name":"Omar","sid":"444","dept":"—","spec":"—","createdAt":"2026-04-26T06:49:30.363Z"}],"results":{},"attendance":{}};
 const EMBEDDED_DATA = window.__TRAINING_DATA__ || null;
 
 const FB_ROOT = 'training';
-
-function fbPath(key) {
-  if (key === 'fq5_trainees_v1')   return `${FB_ROOT}/trainees`;
-  if (key === 'fq5_results_v1')    return `${FB_ROOT}/results`;
-  if (key === 'fq5_attendance_v1') return `${FB_ROOT}/attendance`;
-  return `${FB_ROOT}/${key}`;
+function fbPath(k) {
+  if (k === 'fq5_trainees_v1')   return FB_ROOT + '/trainees';
+  if (k === 'fq5_results_v1')    return FB_ROOT + '/results';
+  if (k === 'fq5_attendance_v1') return FB_ROOT + '/attendance';
+  return FB_ROOT + '/' + k;
 }
 
-async function waitForFirebase(timeout = 6000) {
-  const t0 = Date.now();
-  while (!window._fbReady) {
-    if (Date.now() - t0 > timeout) {
-      console.warn('Firebase timeout — using localStorage fallback');
-      return false;
-    }
-    await new Promise(r => setTimeout(r, 50));
-  }
-  // Double-check we have the actual db object
-  return !!(window._fbDb && window._fbRef && window._fbSet);
-}
+// Helper — get Firebase functions (window.FB set by module script)
+function fb() { return window.FB || null; }
 
+// READ
 async function sGet(k) {
-  const ok = await waitForFirebase();
-  if (ok && window._fbDb) {
+  const f = fb();
+  if (f) {
     try {
-      const snap = await window._fbGet(window._fbRef(window._fbDb, fbPath(k)));
+      const snap = await f.get(f.ref(f.db, fbPath(k)));
       if (snap.exists()) {
-        const val = snap.val();
-        if (k === K_TRAINEES && val && !Array.isArray(val)) return Object.values(val);
-        return val;
+        const v = snap.val();
+        if (k === 'fq5_trainees_v1' && v && !Array.isArray(v)) return Object.values(v);
+        return v;
       }
-      return k === K_TRAINEES ? [] : {};
-    } catch(e) { console.warn('Firebase read error:', e); }
+      return k === 'fq5_trainees_v1' ? [] : {};
+    } catch(e) { console.warn('FB read err:', e.code || e.message); }
   }
   try { const v = localStorage.getItem(k); if (v) return JSON.parse(v); } catch {}
   if (EMBEDDED_DATA) {
-    if (k === K_TRAINEES)   return EMBEDDED_DATA.trainees   || [];
-    if (k === K_RESULTS)    return EMBEDDED_DATA.results    || {};
-    if (k === K_ATTENDANCE) return EMBEDDED_DATA.attendance || {};
+    if (k === 'fq5_trainees_v1')   return EMBEDDED_DATA.trainees   || [];
+    if (k === 'fq5_results_v1')    return EMBEDDED_DATA.results    || {};
+    if (k === 'fq5_attendance_v1') return EMBEDDED_DATA.attendance || {};
   }
-  return k === K_TRAINEES ? [] : {};
+  return k === 'fq5_trainees_v1' ? [] : {};
 }
 
+// WRITE
 async function sSet(k, v) {
   try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
-  if (window.__TRAINING_DATA__) {
-    if (k === K_TRAINEES)   window.__TRAINING_DATA__.trainees   = v;
-    if (k === K_RESULTS)    window.__TRAINING_DATA__.results    = v;
-    if (k === K_ATTENDANCE) window.__TRAINING_DATA__.attendance = v;
-  }
-  const ok = await waitForFirebase();
-  if (ok && window._fbDb) {
-    try { await window._fbSet(window._fbRef(window._fbDb, fbPath(k)), v); }
-    catch(e) { console.warn('Firebase write error:', e); }
+  const f = fb();
+  if (f) {
+    try { await f.set(f.ref(f.db, fbPath(k)), v); }
+    catch(e) { console.warn('FB write err:', e.code || e.message); }
   }
 }
 
+// DELETE
 async function sDel(k) {
   try { localStorage.removeItem(k); } catch {}
-  const ok = await waitForFirebase();
-  if (ok && window._fbDb) {
-    try { await window._fbRemove(window._fbRef(window._fbDb, fbPath(k))); }
-    catch(e) { console.warn('Firebase delete error:', e); }
+  const f = fb();
+  if (f) {
+    try { await f.remove(f.ref(f.db, fbPath(k))); }
+    catch(e) { console.warn('FB delete err:', e.code || e.message); }
   }
 }
 
-// ── LIVE SYNC ─────────────────────────────────────────
+// ── LIVE SYNC ──────────────────────────────────────────────────
 let _fbLive = false;
-async function startFirebaseLiveSync() {
-  if (_fbLive) return;
-  const ok = await waitForFirebase();
-  if (!ok || !window._fbDb) {
-    console.warn('Firebase not ready — live sync disabled. Using localStorage only.');
-    return;
-  }
-  _fbLive = true;
-  console.log('🔴 Starting Firebase live sync...');
 
-  // Listen for data changes (results, trainees, attendance)
-  window._fbOnValue(window._fbRef(window._fbDb, FB_ROOT), snap => {
+function startFirebaseLiveSync() {
+  if (_fbLive) return;
+  const f = fb();
+  if (!f) { console.warn('FB not loaded yet'); return; }
+  _fbLive = true;
+
+  // Watch all training data
+  f.onValue(f.ref(f.db, FB_ROOT), snap => {
     if (!snap.exists()) return;
     const d = snap.val();
     if (d.trainees) {
       _trainees = Array.isArray(d.trainees) ? d.trainees : Object.values(d.trainees);
-      try { localStorage.setItem(K_TRAINEES, JSON.stringify(_trainees)); } catch {}
+      try { localStorage.setItem('fq5_trainees_v1', JSON.stringify(_trainees)); } catch {}
     }
-    if (d.results)    { _results = d.results;       try { localStorage.setItem(K_RESULTS,    JSON.stringify(_results));    } catch {} }
-    if (d.attendance) { _attendance = d.attendance; try { localStorage.setItem(K_ATTENDANCE, JSON.stringify(_attendance)); } catch {} }
+    if (d.results)    { _results    = d.results;    try { localStorage.setItem('fq5_results_v1',    JSON.stringify(_results));    } catch {} }
+    if (d.attendance) { _attendance = d.attendance; try { localStorage.setItem('fq5_attendance_v1', JSON.stringify(_attendance)); } catch {} }
 
+    // Refresh dashboard if open
     const ds = document.getElementById('s-dashboard');
     if (ds && ds.style.display !== 'none' && ds.classList.contains('active')) {
       const timeEl = document.getElementById('dash-time');
       if (timeEl) timeEl.textContent = new Date().toLocaleTimeString('ar-SA',{hour:'2-digit',minute:'2-digit'});
       renderTraineesTable();
       renderAttendance();
-      const perfTab = document.getElementById('dtab-performance');
-      if (perfTab && perfTab.style.display !== 'none') renderPerformance();
     }
   });
 
-  // Listen for scan requests (admin approval queue)
-  window._fbOnValue(window._fbRef(window._fbDb, 'scan_requests'), snap => {
+  // Watch scan requests — always active
+  f.onValue(f.ref(f.db, 'scan_requests'), snap => {
     renderScanRequests(snap.exists() ? snap.val() : {});
   });
 
   console.log('🔴 Firebase live sync ON');
 }
 
-// ══════════════════════════════════════════════════════════════
-//  SCAN REQUEST SYSTEM — Admin approves QR scans
-// ══════════════════════════════════════════════════════════════
+// ── SCAN REQUEST SYSTEM ────────────────────────────────────────
 
-// Called when trainee scans QR — writes pending request to Firebase
 async function submitScanRequest(tid) {
-  const ok = await waitForFirebase();
-  if (!ok || !window._fbDb) {
-    console.warn('Firebase not available — auto-approving trainee (offline mode)');
-    return 'approved'; // auto-approve if Firebase is not connected
-  }
+  const f = fb();
+  if (!f) return 'approved'; // offline → auto-approve
+
   const t = _trainees.find(x => x.id === tid);
   if (!t) return 'not_found';
 
-  // Determine which day
   const nextDay = DAYS.find(d => !(_results[tid]?.[d.id]?.quizScore !== undefined));
-  const dayId = nextDay ? nextDay.id : DAYS[DAYS.length-1].id;
+  const dayId = nextDay ? nextDay.id : DAYS[DAYS.length - 1].id;
 
-  // Write scan request to Firebase
   const reqData = {
     tid, name: t.name, dept: t.dept, spec: t.spec,
-    dayId, dayTitle: DAYS[dayId-1]?.title || '',
+    dayId, dayTitle: DAYS[dayId - 1]?.title || '',
     status: 'pending',
     scannedAt: new Date().toISOString(),
-    scannedAtDisplay: new Date().toLocaleTimeString('ar-SA',{hour:'2-digit',minute:'2-digit'})
+    scannedAtDisplay: new Date().toLocaleTimeString('ar-SA', {hour:'2-digit', minute:'2-digit'})
   };
-  await window._fbSet(window._fbRef(window._fbDb, `scan_requests/${tid}`), reqData);
-  console.log('📤 Scan request submitted for:', t.name);
 
-  // Wait for admin decision (poll Firebase every second for up to 5 minutes)
+  try {
+    await f.set(f.ref(f.db, 'scan_requests/' + tid), reqData);
+    console.log('📤 Scan request submitted for:', t.name);
+  } catch(e) {
+    console.warn('Could not write scan request:', e.message);
+    return 'approved'; // fallback
+  }
+
+  // Wait for admin decision — listen to status field
   return new Promise((resolve) => {
-    const listener = window._fbOnValue(
-      window._fbRef(window._fbDb, `scan_requests/${tid}/status`),
-      (snap) => {
-        const status = snap.val();
-        if (status === 'approved' || status === 'rejected') {
-          // Clean up listener — Firebase doesn't have off() in modular API,
-          // so we resolve and ignore further updates via a flag
-          resolve(status);
-        }
+    let resolved = false;
+    const unsub = f.onValue(f.ref(f.db, 'scan_requests/' + tid + '/status'), (snap) => {
+      const status = snap.val();
+      if (!resolved && (status === 'approved' || status === 'rejected')) {
+        resolved = true;
+        unsub(); // unsubscribe
+        resolve(status);
       }
-    );
-    // Timeout after 5 minutes — auto-reject
-    setTimeout(() => resolve('timeout'), 5 * 60 * 1000);
+    });
+    // Auto-resolve after 5 minutes
+    setTimeout(() => {
+      if (!resolved) { resolved = true; unsub(); resolve('timeout'); }
+    }, 5 * 60 * 1000);
   });
 }
 
-// Admin: accept a scan request
 async function acceptScanRequest(tid) {
-  const ok = await waitForFirebase();
-  if (!ok || !window._fbDb) return;
-  await window._fbSet(window._fbRef(window._fbDb, `scan_requests/${tid}/status`), 'approved');
-  toast('✅ تم قبول ' + (_trainees.find(x=>x.id===tid)?.name || tid));
+  const f = fb(); if (!f) return;
+  await f.set(f.ref(f.db, 'scan_requests/' + tid + '/status'), 'approved');
+  toast('✅ تم قبول ' + (_trainees.find(x => x.id === tid)?.name || tid));
 }
 
-// Admin: reject a scan request
 async function rejectScanRequest(tid) {
-  const ok = await waitForFirebase();
-  if (!ok || !window._fbDb) return;
-  await window._fbSet(window._fbRef(window._fbDb, `scan_requests/${tid}/status`), 'rejected');
-  toast('❌ تم رفض ' + (_trainees.find(x=>x.id===tid)?.name || tid));
+  const f = fb(); if (!f) return;
+  await f.set(f.ref(f.db, 'scan_requests/' + tid + '/status'), 'rejected');
+  toast('❌ تم رفض ' + (_trainees.find(x => x.id === tid)?.name || tid));
 }
 
-// Admin: clear accepted/rejected requests from list
 async function clearScanRequests() {
-  const ok = await waitForFirebase();
-  if (!ok || !window._fbDb) return;
-  const snap = await window._fbGet(window._fbRef(window._fbDb, 'scan_requests'));
-  if (!snap.exists()) return;
-  const reqs = snap.val();
-  for (const [tid, req] of Object.entries(reqs)) {
-    if (req.status === 'approved' || req.status === 'rejected') {
-      await window._fbRemove(window._fbRef(window._fbDb, `scan_requests/${tid}`));
+  const f = fb(); if (!f) return;
+  try {
+    const snap = await f.get(f.ref(f.db, 'scan_requests'));
+    if (!snap.exists()) return;
+    const reqs = snap.val();
+    for (const [tid, req] of Object.entries(reqs)) {
+      if (req.status === 'approved' || req.status === 'rejected') {
+        await f.remove(f.ref(f.db, 'scan_requests/' + tid));
+      }
     }
-  }
-  toast('🗑️ تم مسح الطلبات المعالجة');
+    toast('🗑️ تم مسح الطلبات المعالجة');
+  } catch(e) { console.warn('clearScanRequests error:', e.message); }
 }
 
-// Render scan requests list in admin dashboard
+// ── RENDER SCAN REQUESTS LIST ──────────────────────────────────
 let _prevScanCount = 0;
 function renderScanRequests(requests) {
-  const list = document.getElementById('scan-requests-list');
+  const list  = document.getElementById('scan-requests-list');
   const badge = document.getElementById('scan-badge');
   if (!list) return;
 
   const entries = Object.entries(requests || {});
-  const pending = entries.filter(([,r]) => r.status === 'pending');
+  const pending = entries.filter(([, r]) => r.status === 'pending');
 
-  // Update badge count
   if (badge) {
-    if (pending.length > 0) {
-      badge.style.display = 'inline';
-      badge.textContent = pending.length;
-    } else {
-      badge.style.display = 'none';
-    }
-    // Flash tab button if new request arrived
+    badge.style.display = pending.length > 0 ? 'inline' : 'none';
+    badge.textContent   = pending.length;
     if (pending.length > _prevScanCount) {
-      const tabBtn = document.getElementById('scan-tab-btn');
-      if (tabBtn) { tabBtn.style.background='#f59e0b'; tabBtn.style.color='#fff'; setTimeout(()=>{ tabBtn.style.background=''; tabBtn.style.color=''; }, 2000); }
+      const btn = document.getElementById('scan-tab-btn');
+      if (btn) {
+        btn.style.background = '#f59e0b';
+        btn.style.color = '#fff';
+        setTimeout(() => { btn.style.background = ''; btn.style.color = ''; }, 2500);
+      }
     }
     _prevScanCount = pending.length;
   }
@@ -1126,49 +1053,46 @@ function renderScanRequests(requests) {
     list.innerHTML = `<div style="text-align:center;padding:40px;color:var(--muted)">
       <div style="font-size:2.5rem;margin-bottom:10px">📱</div>
       <p style="font-size:.88rem">في انتظار مسح المتدربين لرموز QR...</p>
+      <p style="font-size:.78rem;margin-top:6px">عندما يمسح متدرب رمزه ستظهر بطاقته هنا</p>
     </div>`;
     return;
   }
 
-  // Sort: pending first, then by time
-  entries.sort(([,a],[,b]) => {
-    if (a.status==='pending' && b.status!=='pending') return -1;
-    if (a.status!=='pending' && b.status==='pending') return 1;
-    return (b.scannedAt||'').localeCompare(a.scannedAt||'');
+  entries.sort(([, a], [, b]) => {
+    if (a.status === 'pending' && b.status !== 'pending') return -1;
+    if (a.status !== 'pending' && b.status === 'pending') return 1;
+    return (b.scannedAt || '').localeCompare(a.scannedAt || '');
   });
 
-  const dayColors = ['','var(--blue)','var(--purple)','var(--g1)','var(--gold)','var(--red)'];
+  const dayColors = ['', 'var(--blue)', 'var(--purple)', 'var(--g1)', 'var(--gold)', 'var(--red)'];
 
   list.innerHTML = entries.map(([tid, req]) => {
     const isPending  = req.status === 'pending';
     const isApproved = req.status === 'approved';
-    const isRejected = req.status === 'rejected';
     const cardCls    = isPending ? 'new' : isApproved ? 'accepted' : 'rejected';
     const statusBadge = isPending
       ? `<span class="pending-badge">⏳ ينتظر</span>`
       : isApproved
         ? `<span class="badge g">✅ مقبول</span>`
         : `<span class="badge r">❌ مرفوض</span>`;
-
     const actions = isPending
       ? `<div style="display:flex;gap:7px;flex-shrink:0">
-           <button onclick="acceptScanRequest('${tid}')" class="btn btn-p" style="padding:7px 14px;font-size:.8rem">✅ قبول</button>
-           <button onclick="rejectScanRequest('${tid}')" class="btn btn-r" style="padding:7px 14px;font-size:.8rem">❌ رفض</button>
+           <button onclick="acceptScanRequest('${tid}')" class="btn btn-p" style="padding:7px 14px;font-size:.82rem">✅ قبول</button>
+           <button onclick="rejectScanRequest('${tid}')" class="btn btn-r" style="padding:7px 14px;font-size:.82rem">❌ رفض</button>
          </div>`
-      : `<div style="font-size:.75rem;color:var(--muted)">${req.scannedAtDisplay||''}</div>`;
-
+      : `<div style="font-size:.75rem;color:var(--muted)">${req.scannedAtDisplay || ''}</div>`;
     return `<div class="scan-card ${cardCls}">
       <div style="display:flex;align-items:center;gap:12px;flex:1;min-width:0">
         <div style="width:46px;height:46px;border-radius:50%;background:linear-gradient(135deg,var(--g1),var(--g2));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:900;font-size:1.1rem;flex-shrink:0">
-          ${(req.name||'?').charAt(0)}
+          ${(req.name || '?').charAt(0)}
         </div>
         <div style="min-width:0">
-          <div style="font-weight:900;font-size:.95rem;margin-bottom:2px">${req.name||'—'}</div>
-          <div style="font-size:.74rem;color:var(--muted);margin-bottom:4px">${req.dept||'—'} · ${req.spec||'—'}</div>
+          <div style="font-weight:900;font-size:.95rem;margin-bottom:2px">${req.name || '—'}</div>
+          <div style="font-size:.74rem;color:var(--muted);margin-bottom:4px">${req.dept || '—'}</div>
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-            <span style="background:${dayColors[req.dayId]||'var(--blue)'};color:#fff;font-size:.68rem;font-weight:800;padding:2px 8px;border-radius:20px;opacity:.9">اليوم ${req.dayId}</span>
+            <span style="background:${dayColors[req.dayId] || 'var(--blue)'};color:#fff;font-size:.68rem;font-weight:800;padding:2px 8px;border-radius:20px">اليوم ${req.dayId}</span>
             ${statusBadge}
-            <span style="font-size:.68rem;color:var(--muted)">⏰ ${req.scannedAtDisplay||''}</span>
+            <span style="font-size:.68rem;color:var(--muted)">⏰ ${req.scannedAtDisplay || ''}</span>
           </div>
         </div>
       </div>
@@ -1740,7 +1664,9 @@ function closeModal() { document.getElementById('modal').className = 'overlay'; 
 // ═══════════════════════════════════════════════════════
 function checkPwd() {
   if (document.getElementById('dash-pwd').value === 'trainer2024') {
-    go('dashboard'); loadDash();
+    go('dashboard');
+    startFirebaseLiveSync(); // start live sync when admin logs in
+    loadDash();
   } else { document.getElementById('dash-pwd').value=''; toast('❌ كلمة المرور خاطئة'); }
 }
 
@@ -2225,7 +2151,9 @@ async function openTraineePage(tid) {
   const loadEl = document.getElementById('trainee-loading');
   if (loadEl) { loadEl.style.display='block'; loadEl.innerHTML='<div style="font-size:2.5rem;margin-bottom:10px">⏳</div><p style="color:var(--muted)">جارٍ الاتصال بالخادم...</p>'; }
 
-  // Load live data from Firebase
+  // Give Firebase module 500ms to init if not ready yet
+  if (!window.FB) await new Promise(r => setTimeout(r, 500));
+  // Load live data
   await loadData();
   document.documentElement.classList.remove('qr-loading');
 
@@ -2284,9 +2212,9 @@ async function openTraineePage(tid) {
     _attendance[t.id][activeDay.id]='present';
     await saveAttendance();
     // Write attendance to Firebase directly
-    const ok = await waitForFirebase();
-    if (ok && window._fbDb) {
-      try { await window._fbSet(window._fbRef(window._fbDb, `training/attendance/${t.id}/${activeDay.id}`), 'present'); } catch(e) {}
+    const f2 = fb();
+    if (f2) {
+      try { await f2.set(f2.ref(f2.db, `training/attendance/${t.id}/${activeDay.id}`), 'present'); } catch(e) {}
     }
   }
 
@@ -2501,14 +2429,13 @@ async function finishDay() {
   await saveResults();
 
   // Push result directly to Firebase for instant dashboard update
-  const fbOk = await waitForFirebase();
-  if (fbOk && window._fbDb) {
+  const f3 = fb();
+  if (f3) {
     try {
-      await window._fbSet(window._fbRef(window._fbDb, `training/results/${t.id}/${d.id}`), _results[t.id][d.id]);
-      // Clean up scan request after quiz done
-      await window._fbRemove(window._fbRef(window._fbDb, `scan_requests/${t.id}`));
+      await f3.set(f3.ref(f3.db, `training/results/${t.id}/${d.id}`), _results[t.id][d.id]);
+      await f3.remove(f3.ref(f3.db, `scan_requests/${t.id}`));
       console.log('✅ Result saved to Firebase:', t.name, 'Day', d.id, qsPct+'%');
-    } catch(e) { console.warn('Firebase result error:', e); }
+    } catch(e) { console.warn('Firebase result error:', e.message); }
   }
 
   const allDone = DAYS.every(day=>_results[t.id]?.[day.id]?.quizScore!==undefined);
@@ -2636,12 +2563,15 @@ window.addEventListener('load', async ()=>{
     });
     const loadEl = document.getElementById('trainee-loading');
     if (loadEl) { loadEl.style.display='block'; }
-    // Start Firebase first so scan request works
-    await startFirebaseLiveSync();
+    // Give the module script 300ms to assign window.FB, then proceed
+    await new Promise(r => setTimeout(r, 300));
+    startFirebaseLiveSync();
     await openTraineePage(tid);
   } else {
-    // Normal load — start live sync for dashboard
+    // Normal load — hide QR loading class
     document.documentElement.classList.remove('qr-loading');
+    // Give module script time to load, then start sync
+    await new Promise(r => setTimeout(r, 300));
     startFirebaseLiveSync();
   }
 

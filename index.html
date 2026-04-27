@@ -3,8 +3,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 <title>نظام تدريب سحب العينات الغذائية — 5 أيام</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800;900&display=swap');
@@ -713,63 +711,6 @@ const K_ATTENDANCE = 'fq5_attendance_v1';
 //  STORAGE — localStorage with export/import for cross-device sync
 // ═══════════════════════════════════════════════════════
 
-// ═══ FIREBASE CONFIGURATION ═══════════════════════════════
-// 🔧 Replace with your values: Firebase Console → Project Settings → Web app
-const FIREBASE_CONFIG = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
-  projectId: "YOUR_PROJECT",
-  storageBucket: "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
-};
-let _firebaseApp=null,_firebaseDB=null;
-function initFirebase(){
-  if(_firebaseApp)return true;
-  try{
-    if(FIREBASE_CONFIG.apiKey==="YOUR_API_KEY"){console.warn("[Firebase] not configured — using localStorage");return false;}
-    _firebaseApp=firebase.initializeApp(FIREBASE_CONFIG);
-    _firebaseDB=firebase.database();
-    console.log("[Firebase] Connected ✅");
-    return true;
-  }catch(e){console.error("[Firebase] init failed:",e);return false;}
-}
-function fbPath(k){
-  if(k===K_TRAINEES)return"training/trainees";
-  if(k===K_RESULTS)return"training/results";
-  if(k===K_ATTENDANCE)return"training/attendance";
-  return"training/"+k;
-}
-
-// ─── Real-time sync — dashboard updates every second via Firebase ───
-let _realtimeActive=false,_rtListeners=[];
-function startRealtimeSync(){
-  if(!initFirebase()||_realtimeActive)return;
-  _realtimeActive=true;
-  const pathMap={"training/trainees":K_TRAINEES,"training/results":K_RESULTS,"training/attendance":K_ATTENDANCE};
-  Object.entries(pathMap).forEach(([path,key])=>{
-    const ref=_firebaseDB.ref(path);
-    ref.on("value",snap=>{
-      if(!snap.exists())return;
-      const val=snap.val();if(!val)return;
-      if(key===K_TRAINEES){_trainees=Array.isArray(val)?val:Object.values(val);try{localStorage.setItem(key,JSON.stringify(_trainees));}catch{}}
-      else if(key===K_RESULTS){_results=val;try{localStorage.setItem(key,JSON.stringify(val));}catch{}}
-      else if(key===K_ATTENDANCE){_attendance=val;try{localStorage.setItem(key,JSON.stringify(val));}catch{}}
-      const ds=document.getElementById("s-dashboard");
-      if(ds&&ds.classList.contains("active"))loadDash();
-    });
-    _rtListeners.push(ref);
-  });
-  setInterval(()=>{
-    const ds=document.getElementById("s-dashboard");
-    if(!ds||!ds.classList.contains("active"))return;
-    const el=document.getElementById("dash-time");
-    if(el)el.textContent=new Date().toLocaleTimeString("ar-SA",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
-  },1000);
-  console.log("[Firebase] Real-time sync active — every second ✅");
-}
-
 // Check if trainee data was pre-embedded (for GitHub Pages)
 window.__TRAINING_DATA__ = {"trainees":[{"id":"mofeqquclqv","name":"Yahia","sid":"111","dept":"—","spec":"—","createdAt":"2026-04-26T06:49:01.284Z"},{"id":"mofeqz0t54s","name":"Ahmed","sid":"222","dept":"—","spec":"—","createdAt":"2026-04-26T06:49:11.885Z"},{"id":"mofer73k4bt","name":"Mahmoud","sid":"333","dept":"—","spec":"—","createdAt":"2026-04-26T06:49:22.352Z"},{"id":"moferda3rou","name":"Omar","sid":"444","dept":"—","spec":"—","createdAt":"2026-04-26T06:49:30.363Z"}],"results":{},"attendance":{}};
 const EMBEDDED_DATA = window.__TRAINING_DATA__ || null;
@@ -781,52 +722,22 @@ async function sGet(k) {
     if (k === K_RESULTS)    return EMBEDDED_DATA.results    || {};
     if (k === K_ATTENDANCE) return EMBEDDED_DATA.attendance || {};
   }
-  // Try Firebase
-  if (initFirebase()) {
-    try {
-      const snap = await _firebaseDB.ref(fbPath(k)).get();
-      if (snap.exists()) {
-        const val = snap.val();
-        if (k === K_TRAINEES && val && typeof val === 'object' && !Array.isArray(val))
-          return Object.values(val);
-        return val;
-      }
-      return null;
-    } catch(e) { console.warn('[Firebase] read error, fallback:', e); }
-  }
   try { const v = localStorage.getItem(k); if (v) return JSON.parse(v); } catch {}
   return null;
 }
 
 async function sSet(k, v) {
+  const s = JSON.stringify(v);
+  try { localStorage.setItem(k, s); } catch {}
   // Also update embedded data in memory so same-session reads work
   if (window.__TRAINING_DATA__) {
     if (k === K_TRAINEES)   window.__TRAINING_DATA__.trainees   = v;
     if (k === K_RESULTS)    window.__TRAINING_DATA__.results    = v;
     if (k === K_ATTENDANCE) window.__TRAINING_DATA__.attendance = v;
   }
-  // Try Firebase
-  if (initFirebase()) {
-    try {
-      let fbVal = v;
-      if (k === K_TRAINEES && Array.isArray(v)) {
-        fbVal = {};
-        v.forEach(item => { if (item.id) fbVal[item.id] = item; });
-      }
-      await _firebaseDB.ref(fbPath(k)).set(fbVal);
-      try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
-      return;
-    } catch(e) { console.warn('[Firebase] write error, fallback:', e); }
-  }
-  const s = JSON.stringify(v);
-  try { localStorage.setItem(k, s); } catch {}
 }
 
 async function sDel(k) {
-  if (initFirebase()) {
-    try { await _firebaseDB.ref(fbPath(k)).remove(); }
-    catch(e) { console.warn('[Firebase] delete error:', e); }
-  }
   try { localStorage.removeItem(k); } catch {}
 }
 
@@ -2227,13 +2138,10 @@ window.addEventListener('load', async ()=>{
     // No QR — show trainee tab as gate when visited
   }
 
-  // Start Firebase real-time sync (dashboard updates every second)
-  startRealtimeSync();
-
-  // Fallback polling when Firebase not configured
+  // Auto-refresh dashboard
   setInterval(()=>{
     const ds=document.getElementById('s-dashboard');
-    if(ds&&ds.style.display!=='none'&&ds.classList.contains('active')&&!_realtimeActive) loadDash();
+    if(ds&&ds.style.display!=='none'&&ds.classList.contains('active')) loadDash();
   }, 10000);
 });
 

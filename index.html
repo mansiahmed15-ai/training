@@ -956,7 +956,18 @@ function startFirebaseLiveSync() {
 
 async function submitScanRequest(tid) {
   const f = fb();
-  if (!f) return 'approved'; // offline → auto-approve
+
+  // If Firebase not loaded, show error on pending screen
+  if (!f) {
+    console.error('Firebase not loaded — cannot submit scan request');
+    const pendingEl = document.getElementById('trainee-pending');
+    if (pendingEl) {
+      pendingEl.innerHTML += `<div style="background:#fee2e2;border-radius:11px;padding:12px;margin-top:14px;font-size:.85rem;color:#dc2626;font-weight:700">
+        ❌ خطأ في الاتصال — تأكد من الإنترنت وأعد المحاولة
+      </div>`;
+    }
+    return new Promise(() => {}); // wait forever — don't auto-approve
+  }
 
   const t = _trainees.find(x => x.id === tid);
   if (!t) return 'not_found';
@@ -976,8 +987,17 @@ async function submitScanRequest(tid) {
     await f.set(f.ref(f.db, 'scan_requests/' + tid), reqData);
     console.log('📤 Scan request submitted for:', t.name);
   } catch(e) {
-    console.warn('Could not write scan request:', e.message);
-    return 'approved'; // fallback
+    console.error('❌ scan_requests write FAILED:', e.code, e.message);
+    // Show error on pending screen — likely a Firebase rules issue
+    const pendingEl = document.getElementById('trainee-pending');
+    if (pendingEl) {
+      pendingEl.innerHTML += `<div style="background:#fee2e2;border-radius:11px;padding:12px;margin-top:14px;font-size:.83rem;color:#dc2626">
+        <strong>❌ فشل الاتصال بالخادم</strong><br>
+        <span style="font-size:.78rem">كود الخطأ: ${e.code || e.message}<br>
+        تأكد أن Firebase Rules تسمح بالكتابة على مسار scan_requests</span>
+      </div>`;
+    }
+    return new Promise(() => {}); // wait — don't auto-approve
   }
 
   // Wait for admin decision — listen to status field
@@ -987,7 +1007,7 @@ async function submitScanRequest(tid) {
       const status = snap.val();
       if (!resolved && (status === 'approved' || status === 'rejected')) {
         resolved = true;
-        unsub(); // unsubscribe
+        unsub();
         resolve(status);
       }
     });

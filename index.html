@@ -252,37 +252,83 @@ body.qr-loading #trainee-welcome { display:none !important; }
   <script type="module">
     import { initializeApp }
       from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-    import { getDatabase, ref, set, get, remove, onValue, push, serverTimestamp }
+    import { getDatabase, ref, set, get, remove, onValue, push }
       from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
     const firebaseConfig = {
-      apiKey: "AIzaSyDummy-ReplaceWithYourRealKey",
+      apiKey: "AIzaSyDgRH8Slr3uk0RRZOFZ5LDu1WDBWtgtTRY",
       authDomain: "qr-training-2026.firebaseapp.com",
       databaseURL: "https://qr-training-2026-default-rtdb.firebaseio.com",
       projectId: "qr-training-2026",
-      storageBucket: "qr-training-2026.appspot.com",
+      storageBucket: "qr-training-2026.firebasestorage.app",
       messagingSenderId: "82257215990",
-      appId: "1:82257215990:web:e675151b45bafe96f387d7"
+      appId: "1:82257215990:web:e675151b45bafe96f387d7",
+      measurementId: "G-J6727JD2KD"
     };
 
-    const app = initializeApp(firebaseConfig);
-    const db  = getDatabase(app);
+    try {
+      const app = initializeApp(firebaseConfig);
+      const db  = getDatabase(app);
 
-    window._fbDb            = db;
-    window._fbRef           = ref;
-    window._fbSet           = set;
-    window._fbGet           = get;
-    window._fbRemove        = remove;
-    window._fbOnValue       = onValue;
-    window._fbPush          = push;
-    window._fbServerTime    = serverTimestamp;
-    window._fbReady         = true;
+      window._fbDb      = db;
+      window._fbRef     = ref;
+      window._fbSet     = set;
+      window._fbGet     = get;
+      window._fbRemove  = remove;
+      window._fbOnValue = onValue;
+      window._fbPush    = push;
 
-    console.log("✅ Firebase connected:", firebaseConfig.projectId);
+      // Use onValue on .info/connected — this special path is always readable
+      // regardless of security rules. It tells us if the client is online.
+      onValue(ref(db, '.info/connected'), (snap) => {
+        if (snap.val() === true) {
+          if (!window._fbReady) {
+            window._fbReady = true;
+            window._fbError = null;
+            // Hide error banner if it was showing
+            const banner = document.getElementById('firebase-error-banner');
+            if (banner) banner.style.display = 'none';
+            console.log("✅ Firebase Realtime Database connected:", firebaseConfig.projectId);
+          }
+        } else {
+          // snap.val() === false means offline but SDK loaded fine
+          // Still mark as ready — operations will queue and sync when online
+          if (!window._fbReady) {
+            window._fbReady = true;
+            console.log("⚡ Firebase SDK loaded (currently offline — will sync when online)");
+          }
+        }
+      }, (err) => {
+        console.error("❌ Firebase error:", err.message);
+        window._fbReady = false;
+        window._fbError = err.message;
+        const banner = document.getElementById('firebase-error-banner');
+        if (banner) banner.style.display = 'block';
+      });
+
+      // Set ready immediately after init — the onValue above confirms connection
+      // but we set ready=true here so the app doesn't wait for the first callback
+      window._fbReady = true;
+      console.log("✅ Firebase SDK initialized for project:", firebaseConfig.projectId);
+
+    } catch(err) {
+      console.error("❌ Firebase init error:", err.message);
+      window._fbReady = false;
+      window._fbError = err.message;
+      const banner = document.getElementById('firebase-error-banner');
+      if (banner) banner.style.display = 'block';
+    }
   </script>
   <!-- ═══════ END FIREBASE SDK ═══════ -->
 </head>
 <body>
+
+<!-- Firebase Error Banner — hidden by default, shown if API key is wrong -->
+<div id="firebase-error-banner" style="display:none;background:#fef2f2;border-bottom:2px solid #fca5a5;padding:10px 22px;text-align:center;font-family:Tajawal,sans-serif;position:sticky;top:0;z-index:999">
+  <strong style="color:#dc2626">❌ Firebase غير متصل</strong>
+  <span style="color:#7f1d1d;font-size:.88rem;margin-right:8px">— تحقق من apiKey في الكود. افتح Console (F12) لتفاصيل الخطأ.</span>
+  <a href="https://console.firebase.google.com/project/qr-training-2026/settings/general" target="_blank" style="color:#dc2626;font-weight:700;font-size:.82rem">فتح Firebase Console ←</a>
+</div>
 
 <nav style="background:#ffffff;border-bottom:2px solid #b8d8cc;height:64px;display:flex;align-items:center;justify-content:space-between;padding:0 22px;position:sticky;top:0;z-index:300;box-shadow:0 2px 16px rgba(10,92,62,.10)">
   <div style="display:flex;align-items:center;gap:13px;flex-shrink:0">
@@ -592,6 +638,24 @@ body.qr-loading #trainee-welcome { display:none !important; }
         </div>
         <button class="btn btn-r" onclick="clearScanRequests()" style="font-size:.76rem;padding:6px 12px">🗑️ مسح المقبولين</button>
       </div>
+      <!-- Firebase setup warning — shown only if not connected -->
+      <div id="firebase-setup-card" style="background:#fff3e0;border:2px solid #f59e0b;border-radius:12px;padding:16px;margin-bottom:14px;display:none">
+        <div style="display:flex;gap:10px;align-items:flex-start">
+          <span style="font-size:1.6rem;flex-shrink:0">⚠️</span>
+          <div>
+            <div style="font-weight:900;color:#92400e;margin-bottom:6px">Firebase غير متصل — الطلبات لن تظهر</div>
+            <div style="font-size:.82rem;color:#78350f;line-height:1.8">
+              <strong>الخطوات لإصلاح المشكلة:</strong><br>
+              1️⃣ افتح <a href="https://console.firebase.google.com/project/qr-training-2026/settings/general" target="_blank" style="color:#92400e;font-weight:700">Firebase Console → Project Settings</a><br>
+              2️⃣ انتقل لـ "Your apps" → اختر تطبيق الويب<br>
+              3️⃣ انسخ قيمة <code style="background:#fde68a;padding:1px 5px;border-radius:4px">apiKey</code><br>
+              4️⃣ في ملف index.html ابحث عن: <code style="background:#fde68a;padding:1px 5px;border-radius:4px">AIzaSyDummy-ReplaceWithYourRealKey</code><br>
+              5️⃣ استبدلها بالـ apiKey الحقيقي → ارفع الملف على GitHub
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div id="scan-requests-list">
         <div style="text-align:center;padding:40px;color:var(--muted)">
           <div style="font-size:2.5rem;margin-bottom:10px">📱</div>
@@ -854,13 +918,17 @@ function fbPath(key) {
   return `${FB_ROOT}/${key}`;
 }
 
-async function waitForFirebase(timeout = 8000) {
+async function waitForFirebase(timeout = 6000) {
   const t0 = Date.now();
   while (!window._fbReady) {
-    if (Date.now() - t0 > timeout) { console.warn('Firebase timeout'); return false; }
-    await new Promise(r => setTimeout(r, 80));
+    if (Date.now() - t0 > timeout) {
+      console.warn('Firebase timeout — using localStorage fallback');
+      return false;
+    }
+    await new Promise(r => setTimeout(r, 50));
   }
-  return true;
+  // Double-check we have the actual db object
+  return !!(window._fbDb && window._fbRef && window._fbSet);
 }
 
 async function sGet(k) {
@@ -913,8 +981,12 @@ let _fbLive = false;
 async function startFirebaseLiveSync() {
   if (_fbLive) return;
   const ok = await waitForFirebase();
-  if (!ok || !window._fbDb) return;
+  if (!ok || !window._fbDb) {
+    console.warn('Firebase not ready — live sync disabled. Using localStorage only.');
+    return;
+  }
   _fbLive = true;
+  console.log('🔴 Starting Firebase live sync...');
 
   // Listen for data changes (results, trainees, attendance)
   window._fbOnValue(window._fbRef(window._fbDb, FB_ROOT), snap => {
@@ -953,7 +1025,10 @@ async function startFirebaseLiveSync() {
 // Called when trainee scans QR — writes pending request to Firebase
 async function submitScanRequest(tid) {
   const ok = await waitForFirebase();
-  if (!ok || !window._fbDb) return 'approved'; // fallback: auto-approve if no Firebase
+  if (!ok || !window._fbDb) {
+    console.warn('Firebase not available — auto-approving trainee (offline mode)');
+    return 'approved'; // auto-approve if Firebase is not connected
+  }
   const t = _trainees.find(x => x.id === tid);
   if (!t) return 'not_found';
 
@@ -1625,6 +1700,11 @@ function showTab(id, btn) {
   document.querySelectorAll('.snbtn').forEach(b=>b.classList.remove('active'));
   const el = document.getElementById('dtab-'+id);
   if (el) el.style.display='block';
+  // Show firebase setup warning in scan tab if not connected
+  if (id === 'scan-requests') {
+    const setupCard = document.getElementById('firebase-setup-card');
+    if (setupCard) setupCard.style.display = (!window._fbReady || window._fbError) ? 'block' : 'none';
+  }
   if (btn && btn !== 'this') btn.classList.add('active');
   else {
     document.querySelectorAll('.snbtn').forEach(b=>{

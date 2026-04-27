@@ -205,7 +205,21 @@ tr:hover td{background:var(--g4)}
 .hbtn.p{background:#fff;color:var(--g1)}
 .hbtn.s{background:rgba(255,255,255,.14);color:#fff;border:2px solid rgba(255,255,255,.28)}
 </style>
-<link id="fq-font" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&amp;display=swap">
+<link id="fq-font" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&amp;display=swap"><style>
+/* Hide all screens instantly when page loads via QR (?tid param) */
+body.qr-loading .screen { display: none !important; }
+body.qr-loading #trainee-gate,
+body.qr-loading #trainee-welcome { display: none !important; }
+</style>
+<script>
+// Run BEFORE anything renders — if ?tid in URL, hide all screens immediately
+(function(){
+  if(new URLSearchParams(window.location.search).get('tid')) {
+    document.documentElement.classList.add('qr-loading');
+  }
+})();
+</script>
+
   <!-- ═══════ FIREBASE SDK ═══════ -->
   <script type="module">
     import { initializeApp }
@@ -743,7 +757,6 @@ const K_ATTENDANCE = 'fq5_attendance_v1';
 //  FIREBASE REALTIME DATABASE — STORAGE LAYER
 // ═══════════════════════════════════════════════════════
 
-// Embedded data (static fallback for offline / QR pages)
 window.__TRAINING_DATA__ = {"trainees":[{"id":"mofeqquclqv","name":"Yahia","sid":"111","dept":"—","spec":"—","createdAt":"2026-04-26T06:49:01.284Z"},{"id":"mofeqz0t54s","name":"Ahmed","sid":"222","dept":"—","spec":"—","createdAt":"2026-04-26T06:49:11.885Z"},{"id":"mofer73k4bt","name":"Mahmoud","sid":"333","dept":"—","spec":"—","createdAt":"2026-04-26T06:49:22.352Z"},{"id":"moferda3rou","name":"Omar","sid":"444","dept":"—","spec":"—","createdAt":"2026-04-26T06:49:30.363Z"}],"results":{},"attendance":{}};
 const EMBEDDED_DATA = window.__TRAINING_DATA__ || null;
 
@@ -759,43 +772,52 @@ function fbPath(key) {
 async function waitForFirebase(timeout = 8000) {
   const t0 = Date.now();
   while (!window._fbReady) {
-    if (Date.now() - t0 > timeout) return false;
+    if (Date.now() - t0 > timeout) { console.warn('Firebase timeout — using localStorage'); return false; }
     await new Promise(r => setTimeout(r, 80));
   }
   return true;
 }
 
-// READ — Firebase first, localStorage fallback
+// READ — Firebase first, then localStorage, then embedded fallback
 async function sGet(k) {
-  if (EMBEDDED_DATA && !isDashboard()) {
-    if (k === K_TRAINEES)   return EMBEDDED_DATA.trainees   || [];
-    if (k === K_RESULTS)    return EMBEDDED_DATA.results    || {};
-    if (k === K_ATTENDANCE) return EMBEDDED_DATA.attendance || {};
-  }
+  // For trainee QR pages: try Firebase first (live data), then embedded fallback
   const ok = await waitForFirebase();
   if (ok && window._fbDb) {
     try {
       const snap = await window._fbGet(window._fbRef(window._fbDb, fbPath(k)));
       if (snap.exists()) {
         const val = snap.val();
-        if (k === K_TRAINEES && val && !Array.isArray(val)) return Object.values(val);
+        // Firebase stores arrays as objects when keys are non-sequential — convert back
+        if (k === K_TRAINEES && val && !Array.isArray(val) && typeof val === 'object') {
+          return Object.values(val);
+        }
         return val;
       }
-      return k === K_TRAINEES ? [] : {};
+      // Nothing in Firebase yet — fall through to embedded data
     } catch(e) { console.warn('Firebase read error:', e); }
   }
+  // localStorage fallback
   try { const v = localStorage.getItem(k); if (v) return JSON.parse(v); } catch {}
+  // Last resort: embedded static data
+  if (EMBEDDED_DATA) {
+    if (k === K_TRAINEES)   return EMBEDDED_DATA.trainees   || [];
+    if (k === K_RESULTS)    return EMBEDDED_DATA.results    || {};
+    if (k === K_ATTENDANCE) return EMBEDDED_DATA.attendance || {};
+  }
   return k === K_TRAINEES ? [] : {};
 }
 
 // WRITE — Firebase + localStorage mirror
 async function sSet(k, v) {
+  // Always mirror to localStorage for offline support
   try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
+  // Update in-memory cache
   if (window.__TRAINING_DATA__) {
     if (k === K_TRAINEES)   window.__TRAINING_DATA__.trainees   = v;
     if (k === K_RESULTS)    window.__TRAINING_DATA__.results    = v;
     if (k === K_ATTENDANCE) window.__TRAINING_DATA__.attendance = v;
   }
+  // Write to Firebase (primary store)
   const ok = await waitForFirebase();
   if (ok && window._fbDb) {
     try { await window._fbSet(window._fbRef(window._fbDb, fbPath(k)), v); }
@@ -813,7 +835,7 @@ async function sDel(k) {
   }
 }
 
-// LIVE SYNC — auto-refresh dashboard when any trainee submits
+// LIVE SYNC — push Firebase changes to dashboard in real-time
 let _fbLive = false;
 async function startFirebaseLiveSync() {
   if (_fbLive) return;
@@ -824,6 +846,7 @@ async function startFirebaseLiveSync() {
   window._fbOnValue(window._fbRef(window._fbDb, FB_ROOT), snap => {
     if (!snap.exists()) return;
     const d = snap.val();
+
     if (d.trainees) {
       _trainees = Array.isArray(d.trainees) ? d.trainees : Object.values(d.trainees);
       try { localStorage.setItem(K_TRAINEES, JSON.stringify(_trainees)); } catch {}
@@ -836,15 +859,19 @@ async function startFirebaseLiveSync() {
       _attendance = d.attendance;
       try { localStorage.setItem(K_ATTENDANCE, JSON.stringify(_attendance)); } catch {}
     }
-    // Refresh dashboard if open
+
+    // Refresh dashboard panels if open
     const ds = document.getElementById('s-dashboard');
     if (ds && ds.style.display !== 'none' && ds.classList.contains('active')) {
-      const t = document.getElementById('dash-time');
-      if (t) t.textContent = new Date().toLocaleTimeString('ar-SA', {hour:'2-digit',minute:'2-digit'});
+      const timeEl = document.getElementById('dash-time');
+      if (timeEl) timeEl.textContent = new Date().toLocaleTimeString('ar-SA', {hour:'2-digit',minute:'2-digit'});
       renderTraineesTable();
       renderAttendance();
+      // Also refresh performance tab if open
+      const perfTab = document.getElementById('dtab-performance');
+      if (perfTab && perfTab.style.display !== 'none') renderPerformance();
     }
-    console.log('🔴 Firebase sync — trainees:', _trainees.length);
+    console.log('🔴 Firebase live sync — trainees:', _trainees.length, '| results keys:', Object.keys(_results).length);
   });
 }
 
@@ -1882,14 +1909,27 @@ async function clearAllData() {
 let activeTrainee=null, activeDay=null, exPhase=0, exScore=0, quizIdx=0, quizScore=0, quizWrong=[];
 
 async function openTraineePage(tid) {
-  await loadData();
-  // Hide all panels first
+  // Always hide gate/welcome — QR scan goes directly to quiz
   ['trainee-gate','trainee-loading','trainee-notfound','trainee-welcome'].forEach(id=>{
-    document.getElementById(id).style.display='none';
+    const el = document.getElementById(id);
+    if (el) el.style.display='none';
   });
+
+  // Show loading spinner
+  const loadingEl = document.getElementById('trainee-loading');
+  if (loadingEl) loadingEl.style.display='block';
+
+  // Load data from Firebase (live) — not from embedded static data
+  await loadData();
+
+  if (loadingEl) loadingEl.style.display='none';
+
+  // Remove the qr-loading class that was hiding screens
+  document.documentElement.classList.remove('qr-loading');
 
   const t = _trainees.find(x=>x.id===tid);
   if (!t) {
+    console.warn('Trainee not found:', tid, 'available:', _trainees.map(x=>x.id));
     document.getElementById('trainee-notfound').style.display='block';
     return;
   }
@@ -2120,6 +2160,23 @@ async function finishDay() {
   };
   await saveResults();
 
+  // Also write this specific result directly to Firebase for instant dashboard update
+  const ok = await waitForFirebase();
+  if (ok && window._fbDb) {
+    try {
+      await window._fbSet(
+        window._fbRef(window._fbDb, `training/results/${t.id}/${d.id}`),
+        _results[t.id][d.id]
+      );
+      // Also mark attendance in Firebase
+      await window._fbSet(
+        window._fbRef(window._fbDb, `training/attendance/${t.id}/${activeDay.id}`),
+        _attendance[t.id]?.[activeDay.id] || 'present'
+      );
+      console.log('✅ Result saved to Firebase for trainee:', t.name, 'Day:', d.id, 'Score:', qsPct+'%');
+    } catch(e) { console.warn('Firebase result write error:', e); }
+  }
+
   const allDone = DAYS.every(day=>_results[t.id]?.[day.id]?.quizScore!==undefined);
   const overall = allDone ? Math.round(DAYS.map(day=>_results[t.id][day.id].quizScore).reduce((a,b)=>a+b,0)/DAYS.length) : null;
 
@@ -2225,7 +2282,6 @@ async function selectTraineeFromGate(id) {
 //  INIT
 // ═══════════════════════════════════════════════════════
 window.addEventListener('load', async ()=>{
-  startFirebaseLiveSync();
   // Apply font
   if(!document.getElementById('fq-font')){
     const l=document.createElement('link');l.id='fq-font';
@@ -2237,20 +2293,37 @@ window.addEventListener('load', async ()=>{
   const tid = params.get('tid');
 
   if (tid) {
-    // QR scan — direct entry
-    go('trainee');
-    document.getElementById('trainee-gate').style.display='none';
-    document.getElementById('trainee-loading').style.display='block';
+    // ── QR SCAN: go directly to trainee quiz, skip gate entirely ──
+    // Hide ALL screens first (CSS class already did this for fast paint)
+    document.querySelectorAll('.screen').forEach(s=>{
+      s.style.display='none';
+      s.classList.remove('active');
+    });
+    // Show trainee screen
+    const traineeScreen = document.getElementById('s-trainee');
+    if (traineeScreen) { traineeScreen.style.display='block'; traineeScreen.classList.add('active'); }
+    // Hide gate, show loading spinner
+    const gate = document.getElementById('trainee-gate');
+    const loading = document.getElementById('trainee-loading');
+    const welcome = document.getElementById('trainee-welcome');
+    if (gate)    gate.style.display    = 'none';
+    if (welcome) welcome.style.display = 'none';
+    if (loading) loading.style.display = 'block';
+    // Start Firebase live sync then load trainee
+    await startFirebaseLiveSync();
     await openTraineePage(tid);
   } else {
-    // No QR — show trainee tab as gate when visited
+    // No QR — normal home page load
+    document.documentElement.classList.remove('qr-loading');
+    // Start dashboard live sync for trainer
+    startFirebaseLiveSync();
   }
 
-  // Auto-refresh dashboard
+  // Auto-refresh dashboard every 15 seconds as backup
   setInterval(()=>{
     const ds=document.getElementById('s-dashboard');
     if(ds&&ds.style.display!=='none'&&ds.classList.contains('active')) loadDash();
-  }, 10000);
+  }, 15000);
 });
 
 // ═══════════════════════════════════════════════════════

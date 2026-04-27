@@ -1052,22 +1052,35 @@ async function rejectScanRequest(tid) {
   const req  = snap.exists() ? snap.val() : null;
   const dayId = req?.dayId || 1;
 
-  // Mark attendance: absent
+  // 1. Mark attendance: absent
   await f.set(f.ref(f.db, `training/attendance/${tid}/${dayId}`), 'absent');
-
-  // Update local cache
   if (!_attendance[tid]) _attendance[tid] = {};
   _attendance[tid][dayId] = 'absent';
   try { localStorage.setItem('fq5_attendance_v1', JSON.stringify(_attendance)); } catch {}
 
-  // Reject the scan request
+  // 2. Write result: 0% for this day (so performance table shows 0 and next scan skips to next day)
+  const zeroResult = {
+    quizScore: 0,
+    exerciseScore: 0,
+    wrongQs: [],
+    absent: true,
+    time: new Date().toLocaleTimeString('ar-SA', {hour:'2-digit', minute:'2-digit'}),
+    date: new Date().toLocaleDateString('ar-SA')
+  };
+  await f.set(f.ref(f.db, `training/results/${tid}/${dayId}`), zeroResult);
+  if (!_results[tid]) _results[tid] = {};
+  _results[tid][dayId] = zeroResult;
+  try { localStorage.setItem('fq5_results_v1', JSON.stringify(_results)); } catch {}
+
+  // 3. Reject the scan request
   await f.set(f.ref(f.db, 'scan_requests/' + tid + '/status'), 'rejected');
 
   const name = _trainees.find(x => x.id === tid)?.name || tid;
-  toast('❌ تم رفض ' + name + ' — سُجّل غيابه اليوم ' + dayId);
+  toast('❌ تم رفض ' + name + ' — غياب اليوم ' + dayId + ' · النتيجة 0%');
 
-  // Refresh attendance table if open
+  // Refresh tables
   renderAttendance();
+  renderTraineesTable();
 }
 
 async function clearScanRequests() {
@@ -1915,7 +1928,13 @@ function renderPerformance() {
     return `<tr>
       <td>${i+1}</td>
       <td><strong>${t.name}</strong><br><span style="font-size:.7rem;color:var(--muted)">${t.dept}</span></td>
-      ${scores.map(s=>s!==undefined?`<td><strong style="color:${s>=80?'var(--g1)':s>=60?'var(--gold)':'var(--red)'}">${s}%</strong></td>`:`<td style="color:var(--muted)">—</td>`).join('')}
+      ${DAYS.map(d=>{
+        const r = _results[t.id]?.[d.id];
+        if (r === undefined) return `<td style="color:var(--muted)">—</td>`;
+        if (r.absent) return `<td><strong style="color:var(--red)">0%</strong><br><span style="font-size:.65rem;color:var(--red)">غياب</span></td>`;
+        const s = r.quizScore;
+        return `<td><strong style="color:${s>=80?'var(--g1)':s>=60?'var(--gold)':'var(--red)'}">${s}%</strong></td>`;
+      }).join('')}
       <td><strong style="color:${avg>=80?'var(--g1)':avg>=60?'var(--gold)':'var(--red)'}">${avg!==null?avg+'%':'—'}</strong></td>
       <td><span class="badge ${lcls}">${level}</span></td>
     </tr>`;
@@ -2238,47 +2257,77 @@ async function openTraineePage(tid) {
   // Submit scan request to Firebase and wait for admin decision
   const decision = await submitScanRequest(tid);
 
+  // Reload data to get latest state (attendance may have been written by admin)
+  await loadData();
+
   if (decision === 'rejected') {
-    if (pendingRejected) pendingRejected.style.display = 'block';
-    if (pendingEl) {
-      pendingEl.querySelector('.pending-badge').style.display = 'none';
-      pendingEl.querySelector('p').style.display = 'none';
+    // Attendance already written as 'absent' by rejectScanRequest
+    // Find the NEXT available day after the rejected one and move trainee forward
+    const rejectedDayId = (_attendance[t.id] && Object.keys(_attendance[t.id]).length)
+      ? Math.max(...Object.keys(_attendance[t.id]).map(Number))
+      : 1;
+
+    // Next incomplete day AFTER the rejected day
+    const nextAvailableDay = DAYS.find(d =>
+      d.id > rejectedDayId && !(_results[t.id]?.[d.id]?.quizScore !== undefined)
+    );
+
+    if (pendingEl) pendingEl.style.display = 'none';
+
+    // Show a "rejected + moved to next day" message
+    const dc = document.getElementById('day-content');
+    if (dc) {
+      dc.innerHTML = `
+        <div style="background:var(--red2);border:1.5px solid #fca5a5;border-radius:16px;padding:24px;text-align:center;margin-bottom:14px">
+          <div style="font-size:2rem;margin-bottom:8px">❌</div>
+          <h3 style="font-weight:900;color:var(--red);margin-bottom:6px">تم رفض طلب دخولك</h3>
+          <p style="color:var(--muted);font-size:.88rem">اليوم ${rejectedDayId} — سُجّل غيابك من قِبل المدرب</p>
+        </div>
+        ${nextAvailableDay ? `
+        <div style="background:var(--g4);border:1.5px solid var(--g5);border-radius:14px;padding:18px;text-align:center">
+          <div style="font-size:1.6rem;margin-bottom:8px">➡️</div>
+          <p style="font-weight:800;color:var(--g1);margin-bottom:4px">يمكنك الدخول في اليوم التالي</p>
+          <p style="color:var(--muted);font-size:.85rem">اليوم ${nextAvailableDay.id}: ${nextAvailableDay.title}</p>
+        </div>` : `
+        <div style="background:var(--g4);border-radius:14px;padding:18px;text-align:center">
+          <p style="color:var(--muted);font-size:.85rem">لا توجد أيام متبقية في البرنامج</p>
+        </div>`}
+      `;
     }
+    document.getElementById('tw-name').textContent = t.name;
+    document.getElementById('tw-dept').textContent = t.dept + ' · ' + t.spec;
+    document.getElementById('tw-day-badge').textContent = nextAvailableDay
+      ? `اليوم ${nextAvailableDay.id}: ${nextAvailableDay.title}`
+      : 'انتهى البرنامج';
+    document.getElementById('trainee-welcome').style.display = 'block';
     return;
   }
 
   if (decision === 'timeout') {
-    // If admin didn't respond in 5 min, auto-approve (so trainee isn't stuck)
     console.log('Admin timeout — auto-approving');
   }
 
-  // Admin approved (or auto-approved) — hide pending, show quiz
+  // Admin approved — hide pending, show quiz
   if (pendingEl) pendingEl.style.display = 'none';
 
-  // Reload data to get latest results
-  await loadData();
-
-  // Determine today's day (first incomplete)
-  const nextDay = DAYS.find(d=>!(_results[t.id]?.[d.id]?.quizScore!==undefined));
-  activeDay = nextDay || DAYS[DAYS.length-1];
+  // Determine next incomplete day (attendance already marked 'present' by acceptScanRequest)
+  const nextDay = DAYS.find(d => !(_results[t.id]?.[d.id]?.quizScore !== undefined));
+  activeDay = nextDay || DAYS[DAYS.length - 1];
 
   document.getElementById('tw-name').textContent = t.name;
-  document.getElementById('tw-dept').textContent = t.dept+' · '+t.spec;
+  document.getElementById('tw-dept').textContent = t.dept + ' · ' + t.spec;
   document.getElementById('tw-day-badge').textContent = `اليوم ${activeDay.id}: ${activeDay.title}`;
 
-  // Mark attendance (approved = present)
-  if (!_attendance[t.id]) _attendance[t.id]={};
+  // Attendance already written by acceptScanRequest — just update local cache if missing
+  if (!_attendance[t.id]) _attendance[t.id] = {};
   if (!_attendance[t.id][activeDay.id]) {
-    _attendance[t.id][activeDay.id]='present';
+    _attendance[t.id][activeDay.id] = 'present';
     await saveAttendance();
-    // Write attendance to Firebase directly
     const f2 = fb();
-    if (f2) {
-      try { await f2.set(f2.ref(f2.db, `training/attendance/${t.id}/${activeDay.id}`), 'present'); } catch(e) {}
-    }
+    if (f2) try { await f2.set(f2.ref(f2.db, `training/attendance/${t.id}/${activeDay.id}`), 'present'); } catch(e) {}
   }
 
-  document.getElementById('trainee-welcome').style.display='block';
+  document.getElementById('trainee-welcome').style.display = 'block';
   renderDayContent();
 }
 

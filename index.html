@@ -205,7 +205,39 @@ tr:hover td{background:var(--g4)}
 .hbtn.p{background:#fff;color:var(--g1)}
 .hbtn.s{background:rgba(255,255,255,.14);color:#fff;border:2px solid rgba(255,255,255,.28)}
 </style>
-<link id="fq-font" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&amp;display=swap"></head>
+<link id="fq-font" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800;900&amp;display=swap">
+  <!-- ═══════ FIREBASE SDK ═══════ -->
+  <script type="module">
+    import { initializeApp }
+      from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { getDatabase, ref, set, get, remove, onValue }
+      from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyDummy-ReplaceWithYourRealKey",
+      authDomain: "qr-training-2026.firebaseapp.com",
+      databaseURL: "https://qr-training-2026-default-rtdb.firebaseio.com",
+      projectId: "qr-training-2026",
+      storageBucket: "qr-training-2026.appspot.com",
+      messagingSenderId: "82257215990",
+      appId: "1:82257215990:web:e675151b45bafe96f387d7"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db  = getDatabase(app);
+
+    window._fbDb      = db;
+    window._fbRef     = ref;
+    window._fbSet     = set;
+    window._fbGet     = get;
+    window._fbRemove  = remove;
+    window._fbOnValue = onValue;
+    window._fbReady   = true;
+
+    console.log("✅ Firebase connected:", firebaseConfig.projectId);
+  </script>
+  <!-- ═══════ END FIREBASE SDK ═══════ -->
+</head>
 <body>
 
 <nav style="background:#ffffff;border-bottom:2px solid #b8d8cc;height:64px;display:flex;align-items:center;justify-content:space-between;padding:0 22px;position:sticky;top:0;z-index:300;box-shadow:0 2px 16px rgba(10,92,62,.10)">
@@ -708,37 +740,112 @@ const K_RESULTS    = 'fq5_results_v1';
 const K_ATTENDANCE = 'fq5_attendance_v1';
 
 // ═══════════════════════════════════════════════════════
-//  STORAGE — localStorage with export/import for cross-device sync
+//  FIREBASE REALTIME DATABASE — STORAGE LAYER
 // ═══════════════════════════════════════════════════════
 
-// Check if trainee data was pre-embedded (for GitHub Pages)
+// Embedded data (static fallback for offline / QR pages)
 window.__TRAINING_DATA__ = {"trainees":[{"id":"mofeqquclqv","name":"Yahia","sid":"111","dept":"—","spec":"—","createdAt":"2026-04-26T06:49:01.284Z"},{"id":"mofeqz0t54s","name":"Ahmed","sid":"222","dept":"—","spec":"—","createdAt":"2026-04-26T06:49:11.885Z"},{"id":"mofer73k4bt","name":"Mahmoud","sid":"333","dept":"—","spec":"—","createdAt":"2026-04-26T06:49:22.352Z"},{"id":"moferda3rou","name":"Omar","sid":"444","dept":"—","spec":"—","createdAt":"2026-04-26T06:49:30.363Z"}],"results":{},"attendance":{}};
 const EMBEDDED_DATA = window.__TRAINING_DATA__ || null;
 
+const FB_ROOT = 'training';
+
+function fbPath(key) {
+  if (key === 'fq5_trainees_v1')   return `${FB_ROOT}/trainees`;
+  if (key === 'fq5_results_v1')    return `${FB_ROOT}/results`;
+  if (key === 'fq5_attendance_v1') return `${FB_ROOT}/attendance`;
+  return `${FB_ROOT}/${key}`;
+}
+
+async function waitForFirebase(timeout = 8000) {
+  const t0 = Date.now();
+  while (!window._fbReady) {
+    if (Date.now() - t0 > timeout) return false;
+    await new Promise(r => setTimeout(r, 80));
+  }
+  return true;
+}
+
+// READ — Firebase first, localStorage fallback
 async function sGet(k) {
-  // If embedded data exists and we are a trainee (not dashboard), use it
   if (EMBEDDED_DATA && !isDashboard()) {
     if (k === K_TRAINEES)   return EMBEDDED_DATA.trainees   || [];
     if (k === K_RESULTS)    return EMBEDDED_DATA.results    || {};
     if (k === K_ATTENDANCE) return EMBEDDED_DATA.attendance || {};
   }
+  const ok = await waitForFirebase();
+  if (ok && window._fbDb) {
+    try {
+      const snap = await window._fbGet(window._fbRef(window._fbDb, fbPath(k)));
+      if (snap.exists()) {
+        const val = snap.val();
+        if (k === K_TRAINEES && val && !Array.isArray(val)) return Object.values(val);
+        return val;
+      }
+      return k === K_TRAINEES ? [] : {};
+    } catch(e) { console.warn('Firebase read error:', e); }
+  }
   try { const v = localStorage.getItem(k); if (v) return JSON.parse(v); } catch {}
-  return null;
+  return k === K_TRAINEES ? [] : {};
 }
 
+// WRITE — Firebase + localStorage mirror
 async function sSet(k, v) {
-  const s = JSON.stringify(v);
-  try { localStorage.setItem(k, s); } catch {}
-  // Also update embedded data in memory so same-session reads work
+  try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
   if (window.__TRAINING_DATA__) {
     if (k === K_TRAINEES)   window.__TRAINING_DATA__.trainees   = v;
     if (k === K_RESULTS)    window.__TRAINING_DATA__.results    = v;
     if (k === K_ATTENDANCE) window.__TRAINING_DATA__.attendance = v;
   }
+  const ok = await waitForFirebase();
+  if (ok && window._fbDb) {
+    try { await window._fbSet(window._fbRef(window._fbDb, fbPath(k)), v); }
+    catch(e) { console.warn('Firebase write error:', e); }
+  }
 }
 
+// DELETE
 async function sDel(k) {
   try { localStorage.removeItem(k); } catch {}
+  const ok = await waitForFirebase();
+  if (ok && window._fbDb) {
+    try { await window._fbRemove(window._fbRef(window._fbDb, fbPath(k))); }
+    catch(e) { console.warn('Firebase delete error:', e); }
+  }
+}
+
+// LIVE SYNC — auto-refresh dashboard when any trainee submits
+let _fbLive = false;
+async function startFirebaseLiveSync() {
+  if (_fbLive) return;
+  const ok = await waitForFirebase();
+  if (!ok || !window._fbDb) return;
+  _fbLive = true;
+
+  window._fbOnValue(window._fbRef(window._fbDb, FB_ROOT), snap => {
+    if (!snap.exists()) return;
+    const d = snap.val();
+    if (d.trainees) {
+      _trainees = Array.isArray(d.trainees) ? d.trainees : Object.values(d.trainees);
+      try { localStorage.setItem(K_TRAINEES, JSON.stringify(_trainees)); } catch {}
+    }
+    if (d.results) {
+      _results = d.results;
+      try { localStorage.setItem(K_RESULTS, JSON.stringify(_results)); } catch {}
+    }
+    if (d.attendance) {
+      _attendance = d.attendance;
+      try { localStorage.setItem(K_ATTENDANCE, JSON.stringify(_attendance)); } catch {}
+    }
+    // Refresh dashboard if open
+    const ds = document.getElementById('s-dashboard');
+    if (ds && ds.style.display !== 'none' && ds.classList.contains('active')) {
+      const t = document.getElementById('dash-time');
+      if (t) t.textContent = new Date().toLocaleTimeString('ar-SA', {hour:'2-digit',minute:'2-digit'});
+      renderTraineesTable();
+      renderAttendance();
+    }
+    console.log('🔴 Firebase sync — trainees:', _trainees.length);
+  });
 }
 
 function isDashboard() {
@@ -2118,6 +2225,7 @@ async function selectTraineeFromGate(id) {
 //  INIT
 // ═══════════════════════════════════════════════════════
 window.addEventListener('load', async ()=>{
+  startFirebaseLiveSync();
   // Apply font
   if(!document.getElementById('fq-font')){
     const l=document.createElement('link');l.id='fq-font';
